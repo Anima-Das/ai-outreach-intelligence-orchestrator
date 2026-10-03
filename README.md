@@ -1,6 +1,6 @@
 <div align="center">
 
-# 02 Autonomous Outreach Intelligence & Campaign Orchestrator
+# Autonomous Outreach Intelligence & Campaign Orchestrator
 
 **An n8n orchestration layer for controlled B2B outreach: evidence-aware AI drafting, centralized lifecycle state, human review, fail-closed sending, event processing, and bounded autonomous campaign execution.**
 
