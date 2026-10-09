@@ -23,7 +23,7 @@
 This repository documents a single n8n workflow export that coordinates the full outreach lifecycle around a PostgreSQL state store and a set of configurable external providers. It is an orchestration and control system, not a mail-merge sender: every lifecycle change is routed through one authoritative transition controller, every outbound message passes a layered send gate, and every uncertain provider outcome is held for reconciliation instead of being resent.
 
 > [!NOTE]
-> The workflow is complete and has been tested with positive results. This README describes the configured behavior of the exported workflow JSON. The workflow is exported with `active: false` so that it is activated deliberately, after the database, credentials, and provider endpoints for the target environment have been configured.
+> **Project status:** the implementation is complete and has been tested, with positive results. This README describes the behavior of the current workflow. The export is saved with `active: false` as a deliberate, import-safe default: after import, the workflow is activated once the target environment's database, credentials, and provider endpoints are configured.
 
 ---
 
@@ -33,7 +33,7 @@ This repository documents a single n8n workflow export that coordinates the full
 |:------|:---------------|
 | **Automation** | One n8n workflow with 40 nodes: 18 authenticated POST webhooks, 3 schedule triggers, 6 JavaScript controller nodes, 1 routing switch, 1 PostgreSQL gateway, 10 HTTP provider nodes, 1 shared response node |
 | **State Model** | Central lifecycle graph of 54 legal edges across 16 lead states, enforced inside a single parameterized SQL statement per transition |
-| **Data Layer** | PostgreSQL through one `DB Gateway` node; schema is provisioned as part of environment setup |
+| **Data Layer** | PostgreSQL through one `DB Gateway` node; the schema is provisioned as part of environment setup |
 | **AI Layer** | External AI provider for target understanding, draft generation, and claim verification; outputs are validated by deterministic code |
 | **Research** | External research provider plus authenticated ingestion endpoints; evidence is stored as structured claims |
 | **Verification** | External email verification; only an explicit `VALID` result continues |
@@ -61,7 +61,7 @@ This repository documents a single n8n workflow export that coordinates the full
 
 ## 🎯 What the System Does
 
-The workflow coordinates a lead through a governed lifecycle. Each capability below is implemented in the exported controllers; external services supply the data they depend on.
+The workflow coordinates a lead through a governed lifecycle. Each capability below is implemented in the controllers; external services supply the data they depend on.
 
 | Capability | What the workflow does |
 |:-----------|:-----------------------|
@@ -229,7 +229,7 @@ All webhook nodes use `POST`, header authentication, and response-node mode.
 | `feedback-report` | On-demand read-only counts | Header auth | Request body is ignored |
 | `roadmap-audit` | On-demand read-only audit snapshot | Header auth | Observational only |
 
-**Response behavior.** Webhook responses are produced by one `Shared Webhook Response` node that returns JSON from `response_body` (or the whole item) with a status code from `response_code`, defaulting to 200. Status codes visible in the controllers include 200, 202, 400, 404, 409, 422, 502, and 503. Transition errors `ILLEGAL_TRANSITION`, `EXPECTED_STATE_MISMATCH`, `TRANSITION_GUARD_FAILED`, and `CAS_FAILED` map to 409; other transition error codes map to 503. Scheduled triggers have no caller to respond to.
+**Response behavior.** Webhook responses are produced by one `Shared Webhook Response` node that returns JSON from `response_body` (or the whole item) with a status code from `response_code`, defaulting to 200. Status codes used by the controllers include 200, 202, 400, 404, 409, 422, 502, and 503. Transition errors `ILLEGAL_TRANSITION`, `EXPECTED_STATE_MISMATCH`, `TRANSITION_GUARD_FAILED`, and `CAS_FAILED` map to 409; other transition error codes map to 503. Scheduled triggers have no caller to respond to.
 
 <details>
 <summary><b>Example request payloads (structure derived from controller code)</b></summary>
@@ -334,12 +334,12 @@ These are examples with obvious placeholders.
 
 ## 🔎 Discovery & Intake
 
-Discovery orchestration is provider-driven. The workflow coordinates discovery rather than searching the internet itself: external discovery services supply candidate records either through the authenticated `discovery-candidate` and `ingest-lead` endpoints, or through the response of the configured `Discovery Provider` HTTP node during an autonomous run.
+Discovery orchestration is provider-driven. The workflow coordinates discovery and delegates the search itself to external discovery services, which supply candidate records either through the authenticated `discovery-candidate` and `ingest-lead` endpoints, or through the response of the configured `Discovery Provider` HTTP node during an autonomous run.
 
 ### Lead Intake Safety
 
-| Control | Source-supported behavior |
-|:--------|:--------------------------|
+| Control | Behavior |
+|:--------|:---------|
 | **Campaign state** | Campaign must exist (404 otherwise) and be `ACTIVE` (409 otherwise) |
 | **Suppression** | Normalized email is checked against the global `suppression` table |
 | **Duplicate prevention** | Rejects a matching `lead_id`, a matching campaign and email pair, or the same email already present in a lifecycle state other than `SUPPRESSED` or `REJECTED` |
@@ -352,7 +352,7 @@ Discovery orchestration is provider-driven. The workflow coordinates discovery r
 
 ### Pattern-Based Content Screening
 
-Pattern-based defensive screening is implemented for selected inbound content: intake fields, research text, and research claims. The patterns target instruction-like phrases such as requests to ignore prior instructions, references to system or developer prompts, credential-related words, requests to forward messages, role-override phrasing, and phrases that ask to disable suppression, safety, approval, or gates.
+Pattern-based defensive screening is applied to selected inbound content: intake fields, research text, and research claims. The patterns target instruction-like phrases such as requests to ignore prior instructions, references to system or developer prompts, credential-related words, requests to forward messages, role-override phrasing, and phrases that ask to disable suppression, safety, approval, or gates.
 
 | Surface | Behavior on a match |
 |:--------|:--------------------|
@@ -361,7 +361,7 @@ Pattern-based defensive screening is implemented for selected inbound content: i
 | **Research claims** | Matched text is cleaned; a claim marked `SUPPORTED` is downgraded to `UNSUPPORTED` and a limitation is recorded |
 
 > [!IMPORTANT]
-> Content screening is a pattern-based layer applied to selected fields. It operates alongside the deterministic validation, claim verification, QA, and send-gate controls described below, which do not depend on the screening patterns.
+> Content screening is one defensive layer. It operates alongside the deterministic validation, claim verification, QA, and send-gate controls described below, which enforce their rules independently of the screening patterns.
 
 ---
 
@@ -416,7 +416,7 @@ The AI provider is an external service reached through the configured `AI_PROVID
 
 The system instructions require using only supplied verified information, using only supported claim IDs, respecting the personalization level exactly, returning a fixed JSON shape (`to`, `subject`, `body`, `personalization_level`, `claim_ids`, `needs_review`, `has_optout`), setting `has_optout` to true, and leaving permissions, approval, queue, and safety controls untouched.
 
-**Personalization is bounded by evidence.** Contact-level personalization is available only at level 1, which requires validated company data and a sourced contact. Level 2 and 3 drafts receive no contact information. Depth of personalization follows the evidence and data quality present for each lead.
+**Personalization is bounded by evidence.** Contact-level personalization is applied only at level 1, which requires validated company data and a sourced contact. Level 2 and 3 drafts receive no contact information. The depth of personalization follows the evidence and data quality present for each lead.
 
 | Draft validation (deterministic) | Result |
 |:---------------------------------|:-------|
@@ -573,11 +573,11 @@ The daily counter is keyed by campaign and UTC date. A confirmed send requires a
 | `RESET_RECOVERY_STREAK` | Breaker `RECOVERY_TEST` with fewer than four healthy components |
 | `NOOP` | Any other combination |
 
-Health rows are read from a `health_checks` table. A health monitor that writes this table is part of the deployment environment and is configured alongside the workflow.
+Health rows are read from the `health_checks` table, which is maintained by the deployment's health monitor alongside the workflow.
 
 </details>
 
-The breaker counts the signals this workflow records (ambiguous send outcomes) and is scoped to that failure class.
+The breaker counts the signals this workflow records (ambiguous send outcomes), which is the failure class it is designed to contain.
 
 ---
 
@@ -591,7 +591,7 @@ Ambiguity is a first-class outcome. It is not collapsed into "failed send".
 | **Database failure after the provider call** | Exact `SENDING` row durably set to `AMBIGUOUS` with a review row and lock release in one statement, response 202, reconciliation invoked only after that commit |
 | **Row left in `SENDING` for over 10 minutes with no message ID and no active lock** | Found by the five-minute maintenance run, set to `AMBIGUOUS`, review row created, audited as crash recovery |
 
-No automatic resend occurs from `AMBIGUOUS`. While a pending `AMBIGUOUS_SEND` review exists for a lead, the send gate blocks further attempts. Pending `AMBIGUOUS_SEND` review rows are resolved by an operator or the reconciliation process, outside the main send path.
+No automatic resend occurs from `AMBIGUOUS`. While a pending `AMBIGUOUS_SEND` review exists for a lead, the send gate blocks further attempts. Resolution of these review rows is an operator decision, taken outside the main send path, or follows from the reconciliation process.
 
 > [!IMPORTANT]
 > Ambiguous email-provider outcomes are not automatically resent.
@@ -600,7 +600,7 @@ No automatic resend occurs from `AMBIGUOUS`. While a pending `AMBIGUOUS_SEND` re
 
 ## ⚖️ Provider Reconciliation
 
-Reconciliation is performed by an external provider and is configured through `EMAIL_PROVIDER_RECONCILE_URL`. When it is unset, ambiguous items remain held until they are resolved by an operator.
+Reconciliation is performed by an external provider and is configured through `EMAIL_PROVIDER_RECONCILE_URL`. When no reconciliation endpoint is configured, ambiguous items stay held until an operator resolves them.
 
 | Reconciliation response | Workflow action |
 |:------------------------|:----------------|
@@ -625,11 +625,11 @@ Lifecycle events require a stable `event_id`. Missing IDs return `EVENT_ID_REQUI
 | **Reply, negative** (`NEGATIVE`, `NO_FURTHER_CONTACT`, `UNSUBSCRIBE`, `NOT_INTERESTED`) | Suppresses with reason `NO_FURTHER_CONTACT`, cancels pending queue rows, transitions to `SUPPRESSED` |
 | **Reply, other** | Recorded as `REPLIED_OTHER` with human handling flagged; no lifecycle change |
 
-Positive replies are flagged for human handling and are routed to a person rather than answered automatically.
+Positive replies are flagged for human handling and routed to a person rather than answered automatically.
 
 ### Suppression
 
-Suppression is a global table keyed by normalized email. It is consulted at lead intake, autonomous pre-intake checks, queue gating, final send gating, the reservation statement, and the provider-time recheck. A suppressed address cannot be inserted as a new lead and cannot pass the send gate. Suppression is a technical control that supports an organization's compliance program; it does not replace legal review or a complete compliance process.
+Suppression is a global table keyed by normalized email. It is consulted at lead intake, autonomous pre-intake checks, queue gating, final send gating, the reservation statement, and the provider-time recheck. A suppressed address cannot be inserted as a new lead and cannot pass the send gate. Suppression is a technical control that supports an organization's compliance program alongside its legal review and policies.
 
 ---
 
@@ -641,8 +641,8 @@ Autonomy here is bounded and state-governed. A run is a durable row in `autonomo
 
 The `discovery-target-prompt` endpoint defines the discovery objective and orchestration context. Discovery itself is performed by an external discovery service.
 
-| Input mode | Fields read by the exported code |
-|:-----------|:---------------------------------|
+| Input mode | Fields read by the workflow |
+|:-----------|:----------------------------|
 | **Free-text** | `prompt` (at least 8 characters), interpreted by the external AI provider into a structured target; `discovery_only` flag; `campaign_id` |
 | **Structured** | `campaign_id`, `daily_limit` (greater than 0), at least one of `target_industry`, `target_region`, `target_persona`, `target_job_role`, and a count from `quantity`, `requested_company_count`, or `requested_send_count` (1 to 1000) |
 
@@ -676,7 +676,7 @@ The AI extraction instruction returns strict JSON with fields for `requested_com
 | Runtime | 120 minutes (clamped 5 to 1440) | `AUTONOMOUS_MAX_RUNTIME_MINUTES` |
 | Queries | 20 | Fixed in code |
 
-The defaults are configured ceilings; the code derives lower effective limits for small targets. Run statuses visible in the code: `DISCOVERY_IN_PROGRESS`, `REPLACEMENT_DISCOVERY_IN_PROGRESS`, `TARGET_QUALIFIED_REACHED`, `TARGET_SENDABLE_COUNT_REACHED`, `TARGET_SEND_COMPLETED`, `GLOBAL_SEND_PAUSED`, `EXTERNAL_DEPENDENCY_REQUIRED`, `DISCOVERY_BUDGET_EXHAUSTED`, `DISCOVERY_RUNTIME_EXHAUSTED`, `SAFE_SHORTFALL`, `PROVIDER_UNAVAILABLE`, and `SAFETY_HOLD`. If the counter read is invalid or incomplete, the run moves to `SAFETY_HOLD` instead of guessing. Sending runs pause when global send permission is not `TRUE`, the breaker is not `CLOSED`, or dependency health is stale.
+The defaults are configured ceilings; the code derives lower effective limits for small targets. Run statuses used by the workflow: `DISCOVERY_IN_PROGRESS`, `REPLACEMENT_DISCOVERY_IN_PROGRESS`, `TARGET_QUALIFIED_REACHED`, `TARGET_SENDABLE_COUNT_REACHED`, `TARGET_SEND_COMPLETED`, `GLOBAL_SEND_PAUSED`, `EXTERNAL_DEPENDENCY_REQUIRED`, `DISCOVERY_BUDGET_EXHAUSTED`, `DISCOVERY_RUNTIME_EXHAUSTED`, `SAFE_SHORTFALL`, `PROVIDER_UNAVAILABLE`, and `SAFETY_HOLD`. If the counter read is invalid or incomplete, the run moves to `SAFETY_HOLD` instead of guessing. Sending runs pause when global send permission is not `TRUE`, the breaker is not `CLOSED`, or dependency health is stale.
 
 ### Recovery
 
@@ -695,7 +695,7 @@ The discovery sweep targets runs that have not updated for 30 minutes in an in-p
 |:--------------------|:-----|:--------------------------|
 | `discovery-status` | On demand, read-only | Run row and recent `autonomous` audit events for a `discovery_run_id` |
 | `feedback-report` | On demand, read-only | Counts of QA outcomes, QA failure reasons, and send outcome audit events (`Email Sent`, `AMBIGUOUS_OUTCOME_HELD`); flagged `read_only` |
-| `roadmap-audit` | On demand, read-only | Audit-style snapshot of the workflow's control state: lists external dependencies and current safety flags, and returns `production_ready` and `live_runtime_verified` as environment-level fields; flagged `observational_only` |
+| `roadmap-audit` | On demand, read-only | Audit-style snapshot of the workflow's control state: external dependencies, current safety flags, and readiness fields; flagged `observational_only` |
 | `Daily Analytics Snapshot` | Scheduled | Reads the `v_funnel` view and writes an `Analytics Snapshot` audit event with the row count; no response is returned |
 
 The feedback report is a historical count report. The roadmap audit is an observational snapshot and does not modify any state.
@@ -706,7 +706,7 @@ Audit events (`audit_events`) capture event type, lead, campaign, source system,
 
 ## 🗄️ Data Layer
 
-The workflow uses an externally provisioned PostgreSQL schema, created as part of environment setup. The exported JSON contains the workflow logic only; table definitions and migrations are managed with the database.
+The workflow runs on a PostgreSQL schema provisioned as part of environment setup. The workflow export carries the orchestration logic; table definitions and migrations are managed with the database.
 
 | Domain | Relations referenced in SQL |
 |:-------|:----------------------------|
@@ -810,8 +810,8 @@ ALERT_WEBHOOK_URL=<alert destination URL>
 
 ## 🚀 Setup & Import
 
-> [!IMPORTANT]
-> Provider credentials, webhook authentication, and the database schema are environment-specific and are configured as part of setup. Complete the steps below before activating the imported workflow.
+> [!NOTE]
+> The steps below cover a first-time installation in a new n8n environment. Provider credentials, webhook authentication, and the database schema are environment-specific, so each new deployment configures them once before the workflow is activated.
 
 1. **Import** the workflow JSON into n8n.
 2. **Configure PostgreSQL** and attach a PostgreSQL credential to `DB Gateway`.
@@ -821,9 +821,9 @@ ALERT_WEBHOOK_URL=<alert destination URL>
 6. **Configure the required credentials** for provider HTTP nodes that use header authentication. Bind a credential to the `Reconcile Provider` and `Alert Webhook` nodes when the destination requires authentication.
 7. **Seed control-plane data**: campaigns (status, dates, sender account and identity, daily limit), `system_flags` values for `GLOBAL_SEND_PERMISSION`, `CIRCUIT_BREAKER`, and `SYSTEM_ANOMALY`, and a health monitor writing `health_checks`.
 8. **Configure external provider behavior** so response shapes match what the controllers parse.
-9. **Confirm the schedule intervals** on the `Every 5 Minutes` and `Daily Analytics Snapshot` triggers in n8n so they match the intended maintenance and reporting cadence.
+9. **Set the schedule intervals** on the `Every 5 Minutes` and `Daily Analytics Snapshot` triggers in n8n to match the intended maintenance and reporting cadence.
 10. **Validate webhook routing** with controlled test requests against each endpoint.
-11. **Run the validation scenarios** below in the target environment, then activate the workflow. The workflow is exported inactive and is activated deliberately.
+11. **Run the validation scenarios** below in the target environment, then activate the workflow. The export is saved inactive so that activation is a deliberate step.
 
 ---
 
@@ -918,15 +918,15 @@ No credential IDs, credential names, tokens, or private URLs are reproduced in t
 
 ---
 
-## 📋 Requirements & Operational Notes
+## 📋 Deployment & Operational Notes
 
-- The workflow integrates with external providers for AI, discovery, research, verification, email delivery, and (optionally) reconciliation. Each provider is configured through the environment variables listed above, and its response shape should match what the controllers parse.
-- Claim verification is performed by an external semantic provider, configured through `AI_PROVIDER_API_URL`.
-- The PostgreSQL schema, including the `v_funnel` view and the `health_checks` writer, is provisioned as part of environment setup.
-- n8n credentials and webhook authentication are configured per environment.
-- Operational results such as throughput and deliverability depend on the configured providers and the deployment environment.
-- `AMBIGUOUS_SEND` review rows are resolved by an operator or the reconciliation process; the send gate blocks the affected lead until the review is resolved.
-- The `Send Lead (Attempt)` entry point and the retry worker initiate sends; the autonomous path queues leads and accounts for sends when they complete.
-- The workflow is exported inactive (`active: false`) and is activated deliberately once the environment is configured.
+- **Provider integration.** The workflow integrates with external providers for AI, discovery, research, verification, email delivery, and (optionally) reconciliation. Each provider is configured through the environment variables listed above, and its response shape is matched to what the controllers parse.
+- **Claim verification.** Claim verification is performed by an external semantic provider reached through `AI_PROVIDER_API_URL`, and its output is enforced by the deterministic QA and send-gate controls.
+- **Database resources.** The PostgreSQL schema, including the `v_funnel` view and the `health_checks` writer, is provisioned as part of environment setup.
+- **Credentials.** n8n credentials and webhook authentication are configured per environment.
+- **Operational results.** Throughput and deliverability follow the configured providers and the deployment environment.
+- **Ambiguous-send review.** `AMBIGUOUS_SEND` review rows are resolved by an operator or the reconciliation process, and the send gate blocks the affected lead until the review is resolved. This is a deliberate human-in-the-loop control that prevents blind resends.
+- **Send entry points.** The `Send Lead (Attempt)` entry point and the retry worker initiate sends; the autonomous path queues leads and accounts for sends when they complete.
+- **Activation.** The workflow is exported inactive (`active: false`) and is activated deliberately once the environment is configured and validated.
 
 ---
